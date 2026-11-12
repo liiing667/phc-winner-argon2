@@ -285,5 +285,82 @@ int main() {
     assert(ret == ARGON2_SALT_TOO_SHORT);
     printf("Fail on salt too short: PASS\n");
 
+    /* Work budget tests: over-budget strings must fail before any
+     * allocation or hashing, and the three failure classes must be
+     * distinguishable. All strings below are well formed. */
+    {
+        argon2_budget budget;
+        const char *fast =
+            "$argon2id$v=19$m=65536,t=2,p=1$c29tZXNhbHQ"
+            "$CTFhFdXPJO1aFaMaO6Mm5c8y7cJHAph8ArZWb2GRPPc";
+        const char *huge_mem =
+            "$argon2id$v=19$m=4294967295,t=2,p=1$c29tZXNhbHQ"
+            "$CTFhFdXPJO1aFaMaO6Mm5c8y7cJHAph8ArZWb2GRPPc";
+        const char *huge_time =
+            "$argon2id$v=19$m=65536,t=4294967295,p=1$c29tZXNhbHQ"
+            "$CTFhFdXPJO1aFaMaO6Mm5c8y7cJHAph8ArZWb2GRPPc";
+        const char *large_mem =
+            "$argon2id$v=19$m=262144,t=2,p=1$c29tZXNhbHQ"
+            "$eP4eyR+zqlZX1y5xCFTkw9m5GYx0L5YWwvCFvtlbLow";
+
+        budget.max_m_cost = 1 << 16;
+        budget.max_t_cost = 2;
+
+        /* A string within the budget verifies as before. */
+        ret = argon2_verify_budget(fast, "password", strlen("password"),
+                                   Argon2_id, &budget);
+        assert(ret == ARGON2_OK);
+        printf("Verify within work budget: PASS\n");
+
+        /* A wrong password is still a mismatch, not a budget error. */
+        ret = argon2_verify_budget(fast, "passw0rd", strlen("passw0rd"),
+                                   Argon2_id, &budget);
+        assert(ret == ARGON2_VERIFY_MISMATCH);
+        printf("Mismatch within work budget: PASS\n");
+
+        /* Memory cost above the budget fails immediately. */
+        ret = argon2_verify_budget(huge_mem, "password",
+                                   strlen("password"), Argon2_id, &budget);
+        assert(ret == ARGON2_MEMORY_TOO_MUCH);
+        printf("Reject memory cost above work budget: PASS\n");
+
+        /* Time cost above the budget fails immediately. */
+        ret = argon2_verify_budget(huge_time, "password",
+                                   strlen("password"), Argon2_id, &budget);
+        assert(ret == ARGON2_TIME_TOO_LARGE);
+        printf("Reject time cost above work budget: PASS\n");
+
+        /* The typed wrapper reports the same memory error. */
+        ret = argon2id_verify_budget(huge_mem, "password",
+                                     strlen("password"), &budget);
+        assert(ret == ARGON2_MEMORY_TOO_MUCH);
+        printf("Typed wrapper enforces work budget: PASS\n");
+
+        /* A zero limit disables that dimension. */
+        budget.max_m_cost = 0;
+        budget.max_t_cost = 2;
+        ret = argon2_verify_budget(large_mem, "password",
+                                   strlen("password"), Argon2_id, &budget);
+        assert(ret == ARGON2_OK);
+        printf("Zero memory limit disables the budget: PASS\n");
+
+        /* A NULL budget keeps the legacy behaviour on valid encodings. */
+        ret = argon2_verify_budget(fast, "password", strlen("password"),
+                                   Argon2_id, NULL);
+        assert(ret == ARGON2_OK);
+        printf("NULL budget keeps legacy limits: PASS\n");
+
+        /* Malformed strings remain decoding errors even on a tight
+         * budget. */
+        budget.max_m_cost = 1;
+        budget.max_t_cost = 1;
+        ret = argon2_verify_budget("$argon2id$v=19$m=65536,t=2,p=1c29tZXNhbHQ"
+                                   "$CTFhFdXPJO1aFaMaO6Mm5c8y7cJHAph8ArZWb2GRPPc",
+                                   "password", strlen("password"),
+                                   Argon2_id, &budget);
+        assert(ret == ARGON2_DECODING_FAIL);
+        printf("Malformed encoding still a decoding error: PASS\n");
+    }
+
     return 0;
 }

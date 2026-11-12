@@ -246,16 +246,21 @@ static int argon2_compare(const uint8_t *b1, const uint8_t *b2, size_t len) {
     return (int)((1 & ((d - 1) >> 8)) - 1);
 }
 
-int argon2_verify(const char *encoded, const void *pwd, const size_t pwdlen,
-                  argon2_type type) {
-
+int argon2_verify_budget(const char *encoded, const void *pwd,
+                         const size_t pwdlen, argon2_type type,
+                         const argon2_budget *budget) {
     argon2_context ctx;
     uint8_t *desired_result = NULL;
 
     int ret = ARGON2_OK;
 
     size_t encoded_len;
-    uint32_t max_field_len;
+    const char *salt_field;
+    const char *hash_field;
+    size_t salt_field_len;
+    size_t hash_field_len;
+    size_t salt_len;
+    size_t hash_len;
 
     if (pwdlen > ARGON2_MAX_PWD_LENGTH) {
         return ARGON2_PWD_TOO_LONG;
@@ -270,22 +275,56 @@ int argon2_verify(const char *encoded, const void *pwd, const size_t pwdlen,
         return ARGON2_DECODING_FAIL;
     }
 
-    /* No field can be longer than the encoded length */
-    max_field_len = (uint32_t)encoded_len;
+    ctx.pwd = (uint8_t *)pwd;
+    ctx.pwdlen = (uint32_t)pwdlen;
+    ctx.salt = NULL;
+    ctx.out = NULL;
 
-    ctx.saltlen = max_field_len;
-    ctx.outlen = max_field_len;
+    /* 1. Parse the parameter prefix without allocating anything. */
+    ret = decode_string_header(&ctx, encoded, type, &salt_field,
+                               &hash_field);
+    if (ret != ARGON2_OK) {
+        goto fail;
+    }
 
-    ctx.salt = malloc(ctx.saltlen);
-    ctx.out = malloc(ctx.outlen);
+    /* 2. Enforce the caller's work budget before any allocation or
+     * hashing, so an over-budget encoding cannot exhaust the process.
+     */
+    if (budget != NULL) {
+        if (budget->max_m_cost != 0 && ctx.m_cost > budget->max_m_cost) {
+            ret = ARGON2_MEMORY_TOO_MUCH;
+            goto fail;
+        }
+        if (budget->max_t_cost != 0 && ctx.t_cost > budget->max_t_cost) {
+            ret = ARGON2_TIME_TOO_LARGE;
+            goto fail;
+        }
+    }
+
+    /* 3. Size the buffers from the actual field lengths rather than
+     * from the whole encoded string.
+     */
+    salt_field_len = (size_t)(strchr(salt_field, '$') - salt_field);
+    hash_field_len = strlen(hash_field);
+    salt_len = b64_decoded_len(salt_field_len);
+    hash_len = b64_decoded_len(hash_field_len);
+    if (salt_len == (size_t)-1 || hash_len == (size_t)-1 ||
+            salt_len > UINT32_MAX || hash_len > UINT32_MAX) {
+        ret = ARGON2_DECODING_FAIL;
+        goto fail;
+    }
+
+    ctx.saltlen = (uint32_t)salt_len;
+    ctx.outlen = (uint32_t)hash_len;
+
+    ctx.salt = malloc(ctx.saltlen ? ctx.saltlen : 1);
+    ctx.out = malloc(ctx.outlen ? ctx.outlen : 1);
     if (!ctx.salt || !ctx.out) {
         ret = ARGON2_MEMORY_ALLOCATION_ERROR;
         goto fail;
     }
 
-    ctx.pwd = (uint8_t *)pwd;
-    ctx.pwdlen = (uint32_t)pwdlen;
-
+    /* 4. Decode the salt and hash and validate the whole context. */
     ret = decode_string(&ctx, encoded, type);
     if (ret != ARGON2_OK) {
         goto fail;
@@ -310,6 +349,27 @@ fail:
     free(desired_result);
 
     return ret;
+}
+
+int argon2_verify(const char *encoded, const void *pwd, const size_t pwdlen,
+                  argon2_type type) {
+    return argon2_verify_budget(encoded, pwd, pwdlen, type, NULL);
+}
+
+int argon2i_verify_budget(const char *encoded, const void *pwd,
+                          const size_t pwdlen, const argon2_budget *budget) {
+    return argon2_verify_budget(encoded, pwd, pwdlen, Argon2_i, budget);
+}
+
+int argon2d_verify_budget(const char *encoded, const void *pwd,
+                          const size_t pwdlen, const argon2_budget *budget) {
+    return argon2_verify_budget(encoded, pwd, pwdlen, Argon2_d, budget);
+}
+
+int argon2id_verify_budget(const char *encoded, const void *pwd,
+                           const size_t pwdlen,
+                           const argon2_budget *budget) {
+    return argon2_verify_budget(encoded, pwd, pwdlen, Argon2_id, budget);
 }
 
 int argon2i_verify(const char *encoded, const void *pwd, const size_t pwdlen) {

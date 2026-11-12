@@ -255,8 +255,6 @@ static const char *decode_decimal(const char *str, unsigned long *v) {
  * when it is fed into decode_string.
  */
 
-int decode_string(argon2_context *ctx, const char *str, argon2_type type) {
-
 /* check for prefix */
 #define CC(prefix)                                                             \
     do {                                                                       \
@@ -288,7 +286,6 @@ int decode_string(argon2_context *ctx, const char *str, argon2_type type) {
         (x) = dec_x;                                                           \
     } while ((void)0, 0)
 
-
 /* Decoding prefix into uint32_t decimal */
 #define DECIMAL_U32(x)                                                         \
     do {                                                                       \
@@ -300,7 +297,67 @@ int decode_string(argon2_context *ctx, const char *str, argon2_type type) {
         (x) = (uint32_t)dec_x;                                                 \
     } while ((void)0, 0)
 
+size_t b64_decoded_len(size_t len) {
+    size_t decoded = (len >> 2) * 3;
+    switch (len & 0x3) {
+    case 0:
+        return decoded;
+    case 2:
+        return decoded + 1;
+    case 3:
+        return decoded + 2;
+    default: /* length 1 modulo 4 is invalid unpadded Base64 */
+        return (size_t)-1;
+    }
+}
 
+int decode_string_header(argon2_context *ctx, const char *str,
+                         argon2_type type, const char **salt_field,
+                         const char **hash_field) {
+    const char *type_string;
+    const char *field;
+
+    type_string = argon2_type2string(type, 0);
+    if (!type_string) {
+        return ARGON2_INCORRECT_TYPE;
+    }
+
+    /* We should start with the argon2_type we are using */
+    CC("$");
+    CC(type_string);
+
+    /* Reading the version number if the default is suppressed */
+    ctx->version = ARGON2_VERSION_10;
+    CC_opt("$v=", DECIMAL_U32(ctx->version));
+
+    CC("$m=");
+    DECIMAL_U32(ctx->m_cost);
+    CC(",t=");
+    DECIMAL_U32(ctx->t_cost);
+    CC(",p=");
+    DECIMAL_U32(ctx->lanes);
+    ctx->threads = ctx->lanes;
+
+    CC("$");
+    *salt_field = str;
+
+    /* The salt field runs up to the next '$' */
+    field = strchr(str, '$');
+    if (field == NULL) {
+        return ARGON2_DECODING_FAIL;
+    }
+    str = field + 1;
+    *hash_field = str;
+
+    /* The hash field is the last field: no further '$' is allowed */
+    if (strchr(str, '$') != NULL) {
+        return ARGON2_DECODING_FAIL;
+    }
+
+    return ARGON2_OK;
+}
+
+int decode_string(argon2_context *ctx, const char *str, argon2_type type) {
 /* Decoding base64 into a binary buffer */
 #define BIN(buf, max_len, len)                                                 \
     do {                                                                       \
@@ -367,6 +424,7 @@ int decode_string(argon2_context *ctx, const char *str, argon2_type type) {
 #undef CC
 #undef CC_opt
 #undef DECIMAL
+#undef DECIMAL_U32
 #undef BIN
 }
 
@@ -460,4 +518,3 @@ size_t numlen(uint32_t num) {
     }
     return len;
 }
-

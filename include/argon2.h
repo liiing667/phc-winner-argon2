@@ -232,6 +232,19 @@ typedef enum Argon2_version {
 } argon2_version;
 
 /*
+ * Caller-controlled limits on the work a verification is allowed to
+ * perform. The units match the parameters stored in an encoded hash:
+ * max_m_cost is expressed in KiB and max_t_cost in passes. A zero
+ * value disables the corresponding limit, and a NULL budget disables
+ * every limit. Limits are enforced before any allocation or hashing
+ * takes place.
+ */
+typedef struct Argon2_budget {
+    uint32_t max_m_cost; /* maximum allowed memory cost in KiB */
+    uint32_t max_t_cost; /* maximum allowed number of passes */
+} argon2_budget;
+
+/*
  * Function that gives the string representation of an argon2_type.
  * @param type The argon2_type that we want the string for
  * @param uppercase Whether the string should have the first letter uppercase
@@ -346,6 +359,37 @@ ARGON2_PUBLIC int argon2id_verify(const char *encoded, const void *pwd,
 /* generic function underlying the above ones */
 ARGON2_PUBLIC int argon2_verify(const char *encoded, const void *pwd,
                                 const size_t pwdlen, argon2_type type);
+
+/**
+ * Verifies a password against an encoded string while enforcing a
+ * caller-controlled work budget. The encoded parameters are parsed and
+ * checked against the budget before any memory is allocated or hashing
+ * is performed, so that over-budget strings cannot exhaust the process.
+ * @param encoded String encoding parameters, salt, hash
+ * @param pwd Pointer to password
+ * @param pwdlen Password size in bytes
+ * @param type Argon2 primitive type to verify against
+ * @param budget Work limits; NULL disables all limits
+ * @pre   Returns ARGON2_OK on success, ARGON2_DECODING_FAIL on malformed
+ *        strings, ARGON2_MEMORY_TOO_MUCH when m_cost exceeds the budget
+ *        and ARGON2_TIME_TOO_LARGE when t_cost exceeds the budget
+ */
+ARGON2_PUBLIC int argon2_verify_budget(const char *encoded, const void *pwd,
+                                       const size_t pwdlen, argon2_type type,
+                                       const argon2_budget *budget);
+
+ARGON2_PUBLIC int argon2i_verify_budget(const char *encoded, const void *pwd,
+                                        const size_t pwdlen,
+                                        const argon2_budget *budget);
+
+ARGON2_PUBLIC int argon2d_verify_budget(const char *encoded, const void *pwd,
+                                        const size_t pwdlen,
+                                        const argon2_budget *budget);
+
+ARGON2_PUBLIC int argon2id_verify_budget(const char *encoded,
+                                         const void *pwd,
+                                         const size_t pwdlen,
+                                         const argon2_budget *budget);
 
 /**
  * Argon2d: Version of Argon2 that picks memory blocks depending

@@ -48,6 +48,24 @@ int encode_string(char *dst, size_t dst_len, argon2_context *ctx,
 */
 int decode_string(argon2_context *ctx, const char *str, argon2_type type);
 
+/*
+* Parses only the parameter prefix of an Argon2 hash string into the
+* provided structure 'ctx' (type, version, m_cost, t_cost and lanes).
+* No salt or hash data is read, so ctx.salt and ctx.out do not have to
+* be allocated yet. On success, *salt and *hash point at the start of
+* the Base64 salt and hash fields inside 'str'.
+*
+* Invalid input string causes ARGON2_DECODING_FAIL to be returned.
+*/
+int decode_string_header(argon2_context *ctx, const char *str,
+                         argon2_type type, const char **salt,
+                         const char **hash);
+
+/* Returns the number of bytes decoded from an unpadded Base64 field of
+ * length 'len', or (size_t)-1 if 'len' is not a valid unpadded Base64
+ * length. */
+size_t b64_decoded_len(size_t len);
+
 /* Returns the length of the encoded byte stream with length len */
 size_t b64len(uint32_t len);
 
